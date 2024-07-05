@@ -58,64 +58,83 @@ export class GitHubProvider extends BaseGitHubProvider<GithubUpdateInfo> {
       },
       cancellationToken
     ))!
-
     const feed = parseXml(feedXml)
-    // noinspection TypeScriptValidateJSTypes
-    let latestRelease = feed.element("entry", false, `No published versions on GitHub`)
-    let tag: string | null = null
-    try {
-      if (this.updater.allowPrerelease) {
-        const currentChannel = this.updater?.channel || (semver.prerelease(this.updater.currentVersion)?.[0] as string) || null
 
-        if (currentChannel === null) {
-          // noinspection TypeScriptValidateJSTypes
-          tag = hrefRegExp.exec(latestRelease.element("link").attribute("href"))![1]
-        } else {
-          for (const element of feed.getElements("entry")) {
-            // noinspection TypeScriptValidateJSTypes
-            const hrefElement = hrefRegExp.exec(element.element("link").attribute("href"))!
+    const allReleases = feed.getElements("entry", false)
+    // console.log("allReleases: ", allReleases)
+    const currentBreakingVersion = breakingVersion(this.updater.currentVersion.toString())
+    // console.log("currentBreakingVersion: ", currentBreakingVersion)
+    const compatibleReleases = allReleases.filter(element => {
+      const hrefElement = hrefRegExp.exec(element.element("link").attribute("href"))!
+      const releaseTag = hrefElement[1]
+      const breakingVer = breakingVersion(releaseTag)
+      return breakingVer && breakingVer === currentBreakingVersion
+    })
 
-            // If this is null then something is wrong and skip this release
-            if (hrefElement === null) continue
+    const compatibleTags = compatibleReleases.map(element => {
+      return hrefRegExp.exec(element.element("link").attribute("href"))![1]
+    })
 
-            // This Release's Tag
-            const hrefTag = hrefElement[1]
-            //Get Channel from this release's tag
-            const hrefChannel = (semver.prerelease(hrefTag)?.[0] as string) || null
+    console.log("Found compatible tags:", compatibleTags)
 
-            const shouldFetchVersion = !currentChannel || ["alpha", "beta"].includes(currentChannel)
-            const isCustomChannel = hrefChannel !== null && !["alpha", "beta"].includes(String(hrefChannel))
-            // Allow moving from alpha to beta but not down
-            const channelMismatch = currentChannel === "beta" && hrefChannel === "alpha"
+    const sortedReleases = compatibleTags.sort((tagA, tagB) => (semver.gt(tagA, tagB) ? -1 : 1))
 
-            if (shouldFetchVersion && !isCustomChannel && !channelMismatch) {
-              tag = hrefTag
-              break
-            }
+    const tag = sortedReleases[0]
+    // try {
+    //   if (this.updater.allowPrerelease) {
+    //     const currentChannel = this.updater?.channel || (semver.prerelease(this.updater.currentVersion)?.[0] as string) || null
 
-            const isNextPreRelease = hrefChannel && hrefChannel === currentChannel
-            if (isNextPreRelease) {
-              tag = hrefTag
-              break
-            }
-          }
-        }
-      } else {
-        tag = await this.getLatestTagName(cancellationToken)
-        for (const element of feed.getElements("entry")) {
-          // noinspection TypeScriptValidateJSTypes
-          if (hrefRegExp.exec(element.element("link").attribute("href"))![1] === tag) {
-            latestRelease = element
-            break
-          }
-        }
-      }
-    } catch (e: any) {
-      throw newError(`Cannot parse releases feed: ${e.stack || e.message},\nXML:\n${feedXml}`, "ERR_UPDATER_INVALID_RELEASE_FEED")
-    }
+    //     if (currentChannel === null) {
+    //       // noinspection TypeScriptValidateJSTypes
+    //       tag = hrefRegExp.exec(latestRelease.element("link").attribute("href"))![1]
+    //     } else {
+    //       for (const element of feed.getElements("entry")) {
+    //         // noinspection TypeScriptValidateJSTypes
+    //         const hrefElement = hrefRegExp.exec(element.element("link").attribute("href"))!
 
-    if (tag == null) {
-      throw newError(`No published versions on GitHub`, "ERR_UPDATER_NO_PUBLISHED_VERSIONS")
+    //         console.log("hrefElement:", hrefElement)
+
+    //         // If this is null then something is wrong and skip this release
+    //         if (hrefElement === null) continue
+
+    //         // This Release's Tag
+    //         const hrefTag = hrefElement[1]
+    //         //Get Channel from this release's tag
+    //         const hrefChannel = (semver.prerelease(hrefTag)?.[0] as string) || null
+
+    //         const shouldFetchVersion = !currentChannel || ["alpha", "beta"].includes(currentChannel)
+    //         const isCustomChannel = hrefChannel !== null && !["alpha", "beta"].includes(String(hrefChannel))
+    //         // Allow moving from alpha to beta but not down
+    //         const channelMismatch = currentChannel === "beta" && hrefChannel === "alpha"
+
+    //         if (shouldFetchVersion && !isCustomChannel && !channelMismatch) {
+    //           tag = hrefTag
+    //           break
+    //         }
+
+    //         const isNextPreRelease = hrefChannel && hrefChannel === currentChannel
+    //         if (isNextPreRelease) {
+    //           tag = hrefTag
+    //           break
+    //         }
+    //       }
+    //     }
+    //   } else {
+    //     tag = await this.getLatestTagName(cancellationToken)
+    //     for (const element of feed.getElements("entry")) {
+    //       // noinspection TypeScriptValidateJSTypes
+    //       if (hrefRegExp.exec(element.element("link").attribute("href"))![1] === tag) {
+    //         latestRelease = element
+    //         break
+    //       }
+    //     }
+    //   }
+    // } catch (e: any) {
+    //   throw newError(`Cannot parse releases feed: ${e.stack || e.message},\nXML:\n${feedXml}`, "ERR_UPDATER_INVALID_RELEASE_FEED")
+    // }
+
+    if (!tag) {
+      throw newError(`No published compatible versions on GitHub`, "ERR_UPDATER_NO_PUBLISHED_VERSIONS")
     }
 
     let rawData: string
@@ -147,13 +166,16 @@ export class GitHubProvider extends BaseGitHubProvider<GithubUpdateInfo> {
       }
     }
 
+    const latestCompatibleRelease = allReleases.find(element => hrefRegExp.exec(element.element("link").attribute("href"))![1] === tag)
+
+
     const result = parseUpdateInfo(rawData, channelFile, channelFileUrl)
     if (result.releaseName == null) {
-      result.releaseName = latestRelease.elementValueOrEmpty("title")
+      result.releaseName = latestCompatibleRelease!.elementValueOrEmpty("title")
     }
 
     if (result.releaseNotes == null) {
-      result.releaseNotes = computeReleaseNotes(this.updater.currentVersion, this.updater.fullChangelog, feed, latestRelease)
+      result.releaseNotes = computeReleaseNotes(this.updater.currentVersion, this.updater.fullChangelog, feed, latestCompatibleRelease)
     }
     return {
       tag: tag,
@@ -161,25 +183,25 @@ export class GitHubProvider extends BaseGitHubProvider<GithubUpdateInfo> {
     }
   }
 
-  private async getLatestTagName(cancellationToken: CancellationToken): Promise<string | null> {
-    const options = this.options
-    // do not use API for GitHub to avoid limit, only for custom host or GitHub Enterprise
-    const url =
-      options.host == null || options.host === "github.com"
-        ? newUrlFromBase(`${this.basePath}/latest`, this.baseUrl)
-        : new URL(`${this.computeGithubBasePath(`/repos/${options.owner}/${options.repo}/releases`)}/latest`, this.baseApiUrl)
-    try {
-      const rawData = await this.httpRequest(url, { Accept: "application/json" }, cancellationToken)
-      if (rawData == null) {
-        return null
-      }
+  // private async getLatestTagName(cancellationToken: CancellationToken): Promise<string | null> {
+  //   const options = this.options
+  //   // do not use API for GitHub to avoid limit, only for custom host or GitHub Enterprise
+  //   const url =
+  //     options.host == null || options.host === "github.com"
+  //       ? newUrlFromBase(`${this.basePath}/latest`, this.baseUrl)
+  //       : new URL(`${this.computeGithubBasePath(`/repos/${options.owner}/${options.repo}/releases`)}/latest`, this.baseApiUrl)
+  //   try {
+  //     const rawData = await this.httpRequest(url, { Accept: "application/json" }, cancellationToken)
+  //     if (rawData == null) {
+  //       return null
+  //     }
 
-      const releaseInfo: GithubReleaseInfo = JSON.parse(rawData)
-      return releaseInfo.tag_name
-    } catch (e: any) {
-      throw newError(`Unable to find latest version on GitHub (${url}), please ensure a production release exists: ${e.stack || e.message}`, "ERR_UPDATER_LATEST_VERSION_NOT_FOUND")
-    }
-  }
+  //     const releaseInfo: GithubReleaseInfo = JSON.parse(rawData)
+  //     return releaseInfo.tag_name
+  //   } catch (e: any) {
+  //     throw newError(`Unable to find latest version on GitHub (${url}), please ensure a production release exists: ${e.stack || e.message}`, "ERR_UPDATER_LATEST_VERSION_NOT_FOUND")
+  //   }
+  // }
 
   private get basePath(): string {
     return `/${this.options.owner}/${this.options.repo}/releases`
@@ -195,9 +217,9 @@ export class GitHubProvider extends BaseGitHubProvider<GithubUpdateInfo> {
   }
 }
 
-interface GithubReleaseInfo {
-  readonly tag_name: string
-}
+// interface GithubReleaseInfo {
+//   readonly tag_name: string
+// }
 
 function getNoteValue(parent: XElement): string {
   const result = parent.elementValueOrEmpty("content")
@@ -222,4 +244,23 @@ export function computeReleaseNotes(currentVersion: semver.SemVer, isFullChangel
     }
   }
   return releaseNotes.sort((a, b) => semver.rcompare(a.version, b.version))
+}
+
+function breakingVersion(version: string): string | undefined {
+  if (!semver.valid(version)) return undefined
+  const prerelease = semver.prerelease(version)
+  if (prerelease) {
+    return `${semver.major(version)}.${semver.minor(version)}.${semver.patch(version)}-${prerelease[0]}`
+  }
+  switch (semver.major(version)) {
+    case 0:
+      switch (semver.minor(version)) {
+        case 0:
+          return `0.0.${semver.patch(version)}`
+        default:
+          return `0.${semver.minor(version)}.x`
+      }
+    default:
+      return `${semver.major(version)}.x.x`
+  }
 }

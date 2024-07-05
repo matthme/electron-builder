@@ -97,13 +97,13 @@ function checkDependencies(dependencies: { [key: string]: string } | null | unde
     return
   }
 
-  const updaterVersion = dependencies["electron-updater"]
-  const requiredElectronUpdaterVersion = "4.0.0"
-  if (updaterVersion != null && !versionSatisfies(updaterVersion, `>=${requiredElectronUpdaterVersion}`)) {
-    errors.push(
-      `At least electron-updater ${requiredElectronUpdaterVersion} is recommended by current electron-builder version. Please set electron-updater version to "^${requiredElectronUpdaterVersion}"`
-    )
-  }
+  // const updaterVersion = dependencies["electron-updater"]
+  // const requiredElectronUpdaterVersion = "4.0.0"
+  // if (updaterVersion != null && !versionSatisfies(updaterVersion, `>=${requiredElectronUpdaterVersion}`)) {
+  //   errors.push(
+  //     `At least electron-updater ${requiredElectronUpdaterVersion} is recommended by current electron-builder version. Please set electron-updater version to "^${requiredElectronUpdaterVersion}"`
+  //   )
+  // }
 
   const swVersion = dependencies["electron-builder-squirrel-windows"]
   if (swVersion != null && !versionSatisfies(swVersion, ">=20.32.0")) {
